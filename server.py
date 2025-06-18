@@ -5,6 +5,8 @@ from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
 from streamer import Streamer
 from dotenv import dotenv_values
+import requests
+import os
 
 config = dotenv_values(".env")
 
@@ -14,17 +16,29 @@ streamer = Streamer(port, stream_res=(640,480))
 # Get a reference to webcam #0 (the default one)
 video_capture = cv2.VideoCapture(0)
 
+known_face_encodings = []
+known_face_names = []
 
-csa_image = face_recognition.load_image_file("csa.jpg")
-csa_face_encoding = face_recognition.face_encodings(csa_image)[0]
+def load_images():
+    students_json = requests.get("http://127.0.0.1:5000/students/json")
+    students = students_json.json()
+    for student in students:
+        photo_request = requests.get(f"http://127.0.0.1:5000/student/photo/{student['id']}")
+        if not os.path.exists("imgs"):
+            os.makedirs("imgs")
+        path = os.path.abspath(os.path.join("imgs", f"{student['id']}.jpg"))
+        with open(path, 'wb') as f:
+            f.write(photo_request.content)
+        image = face_recognition.load_image_file(path)
+        face_encoding = face_recognition.face_encodings(image)[0]
+        known_face_encodings.append(face_encoding)
+        known_face_names.append(f"{student['id']}")
+
+load_images()
+
 
 # Create arrays of known face encodings and their names
-known_face_encodings = [
-    csa_face_encoding
-]
-known_face_names = [
-    "Chernyaev Sergei"
-]
+
 
 # Initialize some variables
 face_locations = []
@@ -86,7 +100,7 @@ while True:
         cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
         font = cv2.FONT_HERSHEY_DUPLEX
         cv2.putText(frame, name, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), 1)
-        print("I see you " + name)
+        #print("I see you " + name)
 
     streamer.update_frame(frame)
 
