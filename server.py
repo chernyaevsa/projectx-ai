@@ -7,6 +7,7 @@ from streamer import Streamer
 from dotenv import dotenv_values
 import requests
 import os
+from datetime import datetime, timedelta
 
 config = dotenv_values(".env")
 
@@ -16,14 +17,19 @@ streamer = Streamer(port, stream_res=(640,480))
 # Get a reference to webcam #0 (the default one)
 video_capture = cv2.VideoCapture(0)
 
+
+# Переменные для контроля спама
+last_unknown_face_time = None
+MIN_EVENT_INTERVAL = timedelta(minutes=1)  # Минимальный интервал между событиями
+
 known_face_encodings = []
 known_face_names = []
 
 def load_images():
-    students_json = requests.get("http://127.0.0.1:5000/students/json")
+    students_json = requests.get(f"http://{config.get("WEB")}/students/json")
     students = students_json.json()
     for student in students:
-        photo_request = requests.get(f"http://127.0.0.1:5000/student/photo/{student['id']}")
+        photo_request = requests.get(f"http://{config.get("WEB")}/student/photo/{student['id']}")
         if not os.path.exists("imgs"):
             os.makedirs("imgs")
         path = os.path.abspath(os.path.join("imgs", f"{student['id']}.jpg"))
@@ -36,6 +42,20 @@ def load_images():
 
 load_images()
 
+def check_and_send_unknown_face_event():
+    global last_unknown_face_time
+    
+    current_time = datetime.now()
+    unknown_faces_present = "Unknown" in face_names
+    
+    if unknown_faces_present:
+        # Если неизвестное лицо в кадре и прошло достаточно времени с последнего события
+        if last_unknown_face_time is None or (current_time - last_unknown_face_time) > MIN_EVENT_INTERVAL:
+            send_event("Неопознанное лицо в кадре", f"Неопознанное лицо обнаружено {current_time}")
+            last_unknown_face_time = current_time
+    else:
+        # Если неизвестных лиц нет, сбрасываем таймер
+        last_unknown_face_time = None
 
 # Create arrays of known face encodings and their names
 
@@ -45,6 +65,24 @@ face_locations = []
 face_encodings = []
 face_names = []
 process_this_frame = True
+
+last_face_names = []
+last_face_names_flag = False
+
+def send_event(msg, desc):
+    print(f"{msg} {desc}")
+    event_request_data = {
+        "name": msg,
+        "description": desc
+    }
+    event_request = requests.post(f"http://{config.get("WEB")}/event/add", json=event_request_data)
+    if not event_request.ok:
+        print(f"Событие не отправлено. Ошибка {event_request.status_code}")
+
+def event_handler():
+    for face_name in last_face_names:
+        if face_name == "Unknown":
+            send_event("Неопознанное лицо в кадре", f"Неопознанное лицо в кадре {datetime.now()}")
 
 while True:
     # Grab a single frame of video
@@ -82,6 +120,9 @@ while True:
 
             face_names.append(name)
 
+    # Проверяем и отправляем событие при необходимости
+    check_and_send_unknown_face_event()
+
     process_this_frame = not process_this_frame
 
 
@@ -100,7 +141,6 @@ while True:
         cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
         font = cv2.FONT_HERSHEY_DUPLEX
         cv2.putText(frame, name, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), 1)
-        #print("I see you " + name)
 
     streamer.update_frame(frame)
 
